@@ -5,9 +5,6 @@
 
 // this should align with the correct versions of these ChucK files
 #include "chugin.h"
-// #include "chuck_dl.h"
-// #include "chuck_def.h"
-// #include "chuck_type.h"
 #include "abl_link_instance.hpp"
 
 // general includes
