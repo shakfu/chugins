@@ -1,0 +1,9 @@
+
+ARCHS?=x86_64 arm64
+ARCHOPTS=$(addprefix -arch ,$(ARCHS))
+
+FLAGS+=-mmacosx-version-min=10.9 -I$(CK_SRC_PATH) -I$(LINK_INCLUDES) -I$(ASIO_INCLUDES) $(ARCHOPTS) -fPIC -DLINK_PLATFORM_MACOSX=1 -DASIO_STANDALONE -DASIO_HEADER_ONLY
+LDFLAGS+=-mmacosx-version-min=10.9 -shared $(ARCHOPTS)
+
+LD=clang++
+CXX=clang++

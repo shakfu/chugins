@@ -20,11 +20,8 @@ std::weak_ptr<AblLinkWrapper> AblLinkWrapper::shared_instance;
 
 AblLinkWrapper::AblLinkWrapper(double bpm) :
     link(bpm),
-    timeline(ableton::link::Timeline(), false),
-    time_filter(
-        ableton::link::HostTimeFilter<ableton::link::platform::Clock>()),
-    latency_offset(ABL_LINK_OFFSET_MS * 1000),
-    //num_peers_sym(gensym("#abl_link_num_peers")),
+    time_filter(),
+    latency_offset(std::chrono::microseconds(ABL_LINK_OFFSET_MS * 1000)),
     num_peers(-1),
     sample_time(0.0),
     invocation_count(0) {
@@ -37,28 +34,22 @@ void AblLinkWrapper::set_offset(double offset_ms) {
   latency_offset = std::chrono::microseconds((int)(offset_ms * 1000));
 }
 
-ableton::Link::Timeline& AblLinkWrapper::acquireAudioTimeline(
+ableton::Link::SessionState AblLinkWrapper::acquireAudioTimeline(
     std::chrono::microseconds *current_time) {
-  if (invocation_count++ == 0) {
-    const int n = link.numPeers();
-    /*
-    if (n != num_peers && num_peers_sym->s_thing) {
-      pd_float(num_peers_sym->s_thing, n);
-      num_peers = n;
-    }*/
-    timeline = link.captureAudioTimeline();
-    sample_time ++;
-    curr_time = time_filter.sampleTimeToHostTime(sample_time) + latency_offset;
+  const std::size_t n = link.numPeers();
+  if (n != num_peers) {
+    num_peers = static_cast<int>(n);
   }
+
+  auto timeline = link.captureAudioSessionState();
+  sample_time++;
+  curr_time = time_filter.sampleTimeToHostTime(sample_time) + latency_offset;
   *current_time = curr_time;
   return timeline;
 }
 
-void AblLinkWrapper::releaseAudioTimeline() {
-  if (invocation_count >= shared_instance.use_count()) {
-    link.commitAudioTimeline(timeline);
-    invocation_count = 0;
-  }
+void AblLinkWrapper::releaseAudioTimeline(const ableton::Link::SessionState& timeline) {
+  link.commitAudioSessionState(timeline);
 }
 
 std::shared_ptr<AblLinkWrapper>
@@ -68,7 +59,7 @@ std::shared_ptr<AblLinkWrapper>
     ptr.reset(new AblLinkWrapper(bpm));
     shared_instance = ptr;
   } else {
-    printf("Using existing Link instance with ref count %d.\n", ptr.use_count());
+    printf("Using existing Link instance with ref count %ld.\n", ptr.use_count());
   }
   return ptr;
 }

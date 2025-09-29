@@ -4,8 +4,10 @@
 //-----------------------------------------------------------------------------
 
 // this should align with the correct versions of these ChucK files
-#include "chuck_dl.h"
-#include "chuck_def.h"
+#include "chugin.h"
+// #include "chuck_dl.h"
+// #include "chuck_def.h"
+// #include "chuck_type.h"
 #include "abl_link_instance.hpp"
 
 // general includes
@@ -59,7 +61,7 @@ public:
     SAMPLE tick( SAMPLE in )
     {
       std::chrono::microseconds curr_time;
-      auto& timeline = link->acquireAudioTimeline(&curr_time);
+      auto timeline = link->acquireAudioTimeline(&curr_time);
       if (tempo < 0) {
         timeline.setTempo(-tempo, curr_time);
       }
@@ -82,7 +84,7 @@ public:
         }
       }
       prev_beat_time = curr_beat_time;
-      link->releaseAudioTimeline();
+      link->releaseAudioTimeline(timeline);
 
       return outval;
     }
@@ -124,9 +126,9 @@ public:
     int setReset (t_CKINT p)
     {
       std::chrono::microseconds curr_time;
-      auto& timeline = link->acquireAudioTimeline(&curr_time);
+      auto timeline = link->acquireAudioTimeline(&curr_time);
       if (tempo < 0) {
-        timeline.setTempo(tempo, curr_time);
+        timeline.setTempo(-tempo, curr_time);
       }
       const double prev_tempo = tempo;
       tempo = timeline.tempo();
@@ -137,6 +139,7 @@ public:
       timeline.requestBeatAtTime(prev_beat_time, curr_time, quantum);
       curr_beat_time = timeline.beatAtTime(curr_time, quantum);
       prev_beat_time = curr_beat_time - 1e-6;
+      link->releaseAudioTimeline(timeline);
       return p;
     }
 
@@ -213,7 +216,7 @@ CK_DLL_CTOR(abletonlink_ctor)
     OBJ_MEMBER_INT(SELF, abletonlink_data_offset) = 0;
 
     // instantiate our internal c++ class representation
-    AbletonLink * al_obj = new AbletonLink(API->vm->get_srate());
+    AbletonLink * al_obj = new AbletonLink(API->vm->srate(VM));
 
     // store the pointer in the ChucK object member
     OBJ_MEMBER_INT(SELF, abletonlink_data_offset) = (t_CKINT) al_obj;

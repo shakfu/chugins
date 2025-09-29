@@ -8,6 +8,7 @@
 #define __ABL_LINK_INSTANCE_H__
 
 #include <memory>
+#include <chrono>
 
 #include "ableton/Link.hpp"
 #include "ableton/link/HostTimeFilter.hpp"
@@ -25,16 +26,15 @@ class AblLinkWrapper {
 
   void set_offset(double offset_ms);
 
-  ableton::Link::Timeline&
+  ableton::Link::SessionState
       acquireAudioTimeline(std::chrono::microseconds *current_time);
 
-  void releaseAudioTimeline();
+  void releaseAudioTimeline(const ableton::Link::SessionState& timeline);
 
  private:
   explicit AblLinkWrapper(double bpm);
 
   ableton::Link link;
-  ableton::Link::Timeline timeline;
   ableton::link::HostTimeFilter<ableton::link::platform::Clock> time_filter;
   std::chrono::microseconds latency_offset;
   int num_peers;
