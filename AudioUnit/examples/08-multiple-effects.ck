@@ -1,6 +1,8 @@
 // Chaining Multiple AudioUnits
 // Demonstrates using multiple AudioUnit effects in series
 
+@import "AudioUnit";
+
 SinOsc osc => AudioUnit delay => AudioUnit reverb => dac;
 
 // Generate a test signal
@@ -8,7 +10,7 @@ SinOsc osc => AudioUnit delay => AudioUnit reverb => dac;
 0.3 => osc.gain;
 
 <<< "=== Multiple AudioUnits Example ===" >>>;
-<<< "" >>>;
+
 
 // Load delay
 if (delay.load("AUDelay")) {
@@ -37,9 +39,9 @@ if (reverb.load("AUReverb")) {
     <<< "Failed to load reverb" >>>;
 }
 
-<<< "" >>>;
+
 <<< "Signal chain: SinOsc => Delay => Reverb => dac" >>>;
-<<< "" >>>;
+
 
 // Play a melody through the effect chain
 <<< "Playing melody through effect chain..." >>>;
@@ -53,7 +55,7 @@ for (0 => int i; i < melody.length; i++) {
 
 // Silence and let effects tail decay
 0 => osc.gain;
-<<< "" >>>;
+
 <<< "Letting effects decay..." >>>;
 2::second => now;
 
@@ -61,5 +63,5 @@ for (0 => int i; i < melody.length; i++) {
 delay.close();
 reverb.close();
 
-<<< "" >>>;
+
 <<< "=== Example complete ===" >>>;

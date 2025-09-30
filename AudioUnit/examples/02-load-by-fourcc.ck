@@ -2,10 +2,12 @@
 // Demonstrates the alternative method of loading AudioUnits using
 // type, subtype, and manufacturer codes
 
+@import "AudioUnit";
+
 adc => AudioUnit au => dac;
 
 <<< "=== Loading AudioUnit by Four-Character Codes ===" >>>;
-<<< "" >>>;
+
 
 // Load Apple's AULowpass filter using four-character codes
 // Format: au.open(type, subtype, manufacturer)
@@ -17,7 +19,7 @@ if (au.open("aufx", "lpas", "appl")) {
     <<< "  Type: 'aufx' (effect)" >>>;
     <<< "  SubType: 'lpas' (lowpass)" >>>;
     <<< "  Manufacturer: 'appl' (Apple)" >>>;
-    <<< "" >>>;
+
 
     <<< "Processing audio for 5 seconds..." >>>;
     5::second => now;
@@ -28,7 +30,7 @@ if (au.open("aufx", "lpas", "appl")) {
     <<< "Failed to load AULowpass" >>>;
 }
 
-<<< "" >>>;
+
 <<< "=== Common Four-Character Codes ===" >>>;
 <<< "Effects (aufx):" >>>;
 <<< "  lpas - Lowpass filter" >>>;
@@ -37,5 +39,5 @@ if (au.open("aufx", "lpas", "appl")) {
 <<< "  dely - Delay" >>>;
 <<< "  rvb2 - Reverb" >>>;
 <<< "  dist - Distortion" >>>;
-<<< "" >>>;
+
 <<< "Use AudioUnit.list() to see all available codes" >>>;

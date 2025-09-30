@@ -1,24 +1,24 @@
 // Parameter Sweep and Modulation
 // Demonstrates various parameter modulation techniques
 
+@import "AudioUnit";
+
 SinOsc osc => AudioUnit au => dac;
 
 220 => osc.freq;
 0.4 => osc.gain;
 
 <<< "=== Parameter Sweep and Modulation Example ===" >>>;
-<<< "" >>>;
+
 
 if (au.load("AULowpass")) {
     <<< "Loaded AULowpass filter" >>>;
-    <<< "" >>>;
 
     // Display parameters
     <<< "Parameters:" >>>;
     for (0 => int i; i < au.paramCount(); i++) {
         <<< "  [" + i + "]", au.paramName(i), "=", au.getParam(i) >>>;
     }
-    <<< "" >>>;
 
     if (au.paramCount() > 0) {
         // Example 1: Linear sweep
@@ -27,7 +27,6 @@ if (au.load("AULowpass")) {
             au.setParam(0, t);
             20::ms => now;
         }
-        <<< "" >>>;
 
         // Example 2: Sine wave modulation
         <<< "2. Sine wave modulation" >>>;
@@ -36,7 +35,6 @@ if (au.load("AULowpass")) {
             au.setParam(0, value);
             50::ms => now;
         }
-        <<< "" >>>;
 
         // Example 3: Triangle wave
         <<< "3. Triangle wave modulation" >>>;
@@ -52,7 +50,6 @@ if (au.load("AULowpass")) {
                 25::ms => now;
             }
         }
-        <<< "" >>>;
 
         // Example 4: Random jumps
         <<< "4. Random parameter jumps" >>>;
@@ -62,7 +59,7 @@ if (au.load("AULowpass")) {
             <<< "  Random value:", value >>>;
             200::ms => now;
         }
-        <<< "" >>>;
+
     } else {
         <<< "No parameters available for modulation" >>>;
     }
@@ -72,5 +69,5 @@ if (au.load("AULowpass")) {
     <<< "Failed to load AULowpass" >>>;
 }
 
-<<< "" >>>;
+
 <<< "=== Example complete ===" >>>;

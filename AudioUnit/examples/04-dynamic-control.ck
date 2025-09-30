@@ -1,26 +1,28 @@
 // Dynamic Parameter Control
 // Demonstrates real-time parameter modulation
 
+@import "AudioUnit";
+
 adc => AudioUnit au => dac;
 
 <<< "=== Dynamic Parameter Control Example ===" >>>;
-<<< "" >>>;
+
 
 // Load a filter effect
 if (au.load("Lowpass")) {
     <<< "Loaded Lowpass filter" >>>;
-    <<< "" >>>;
+
 
     // Print parameters
     <<< "Parameters:" >>>;
     for (0 => int i; i < au.paramCount(); i++) {
         <<< "  [" + i + "]", au.paramName(i) >>>;
     }
-    <<< "" >>>;
+
 
     <<< "Sweeping first parameter (typically cutoff frequency) with a sine wave..." >>>;
     <<< "Duration: 10 seconds" >>>;
-    <<< "" >>>;
+
 
     // Sweep parameter 0 over time
     0.0 => float t;
@@ -47,5 +49,5 @@ if (au.load("Lowpass")) {
     <<< "Try another filter effect available on your system" >>>;
 }
 
-<<< "" >>>;
+
 <<< "=== Example complete ===" >>>;

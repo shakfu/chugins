@@ -1,6 +1,8 @@
 // Switching AudioUnits Dynamically
 // Demonstrates loading different AudioUnits during runtime
 
+@import "AudioUnit";
+
 SinOsc osc => AudioUnit au => dac;
 
 // Test signal
@@ -8,7 +10,7 @@ SinOsc osc => AudioUnit au => dac;
 0.3 => osc.gain;
 
 <<< "=== Dynamic AudioUnit Switching Example ===" >>>;
-<<< "" >>>;
+
 
 // List of effects to try
 ["AUDelay", "AULowpass", "AUDistortion", "AUReverb"] @=> string effects[];
@@ -36,7 +38,7 @@ for (0 => int i; i < effects.length; i++) {
         <<< "  Skipping..." >>>;
     }
 
-    <<< "" >>>;
+
 }
 
 <<< "=== Example complete ===" >>>;
