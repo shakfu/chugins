@@ -9,6 +9,9 @@
 // Create AudioUnit and connect to audio output
 AudioUnit synth => dac;
 
+// IMPORTANT: Set gain to hear output
+0.5 => synth.gain;
+
 // Load a MusicDevice (instrument) AudioUnit
 if (!synth.load("DLSMusicDevice")) {
     <<< "Failed to load DLSMusicDevice" >>>;

@@ -132,6 +132,7 @@ Send MIDI messages directly to the AudioUnit from ChucK code:
 
 ```chuck
 AudioUnit synth => dac;
+0.5 => synth.gain;  // Set gain to hear output
 
 // Load a MusicDevice (instrument)
 synth.load("DLSMusicDevice");
@@ -179,6 +180,8 @@ When a MusicDevice is loaded, the chugin **automatically creates a virtual MIDI 
 ```chuck
 // First, load the AudioUnit instrument
 AudioUnit synth => dac;
+0.5 => synth.gain;  // Set gain to hear output
+
 synth.load("DLSMusicDevice");
 
 // The virtual MIDI destination is created automatically
@@ -218,6 +221,7 @@ If you want to manually route ChucK's `MidiIn` to an AudioUnit, you can do this 
 MidiIn min;
 MidiMsg msg;
 AudioUnit synth => dac;
+0.5 => synth.gain;  // Set gain to hear output
 
 min.open(0);  // Open MIDI input device
 synth.load("DLSMusicDevice");
@@ -263,6 +267,7 @@ Comprehensive examples are provided in the `examples/` directory:
 
 ### MIDI Control
 - `07-midi.ck` - **Option A:** Direct programmatic MIDI control (noteOn, noteOff, CC, etc.)
+- `07-midi-simple.ck` - Minimal MIDI example (6-note melody, verified working)
 - `07-midi-routing.ck` - **Option C:** Virtual MIDI destination (external MIDI routing)
 
 See `examples/README.md` for detailed information about each example.
@@ -370,6 +375,11 @@ Send raw MIDI message for full control.
 - Parameter values are typically normalized to 0.0-1.0 range
 - The chugin uses the AudioUnit v2 API (compatible with modern macOS)
 - Thread-safe parameter changes
+- **MIDI Support:**
+  - MusicDevice AudioUnits automatically create virtual MIDI destinations via CoreMIDI
+  - MIDI messages use sample-accurate timing
+  - Virtual MIDI destinations appear in `chuck --probe` output
+  - Non-interleaved stereo audio buffers for optimal AudioUnit compatibility
 
 ## Troubleshooting
 
@@ -382,6 +392,13 @@ Send raw MIDI message for full control.
 - Check the AudioUnit is not bypassed
 - Verify input is connected (for effects)
 - Some parameters may need initialization
+- **For MusicDevice instruments:** Make sure to set gain (e.g., `0.5 => synth.gain`)
+
+**MIDI not producing sound:**
+- Verify the AudioUnit is a MusicDevice using `isMusicDevice()`
+- Ensure gain is set on the AudioUnit UGen
+- Check that MIDI messages are being sent (noteOn returns 1 on success)
+- Try the verified working example `07-midi-simple.ck` first
 
 **Parameters not working as expected:**
 - Different AudioUnits use different parameter ranges

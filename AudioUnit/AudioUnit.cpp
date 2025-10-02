@@ -74,25 +74,32 @@ public:
         , m_bypass(false)
         , m_midiClient(0)
         , m_midiDestination(0)
+        , m_sampleTime(0)
+        , m_bufferList(NULL)
     {
-        // Allocate input/output buffers
-        m_inputBuffer.mNumberChannels = 2;
-        m_inputBuffer.mDataByteSize = sizeof(float) * 2;
-        m_inputBuffer.mData = calloc(2, sizeof(float));
+        // Allocate buffers for non-interleaved stereo
+        // Non-interleaved means separate buffers for left and right channels
+        m_outputBufferData[0] = (float*)calloc(1, sizeof(float));
+        m_outputBufferData[1] = (float*)calloc(1, sizeof(float));
 
-        m_outputBuffer.mNumberChannels = 2;
-        m_outputBuffer.mDataByteSize = sizeof(float) * 2;
-        m_outputBuffer.mData = calloc(2, sizeof(float));
+        // Allocate AudioBufferList with space for 2 buffers
+        m_bufferList = (AudioBufferList*)malloc(offsetof(AudioBufferList, mBuffers) + 2 * sizeof(AudioBuffer));
+        m_bufferList->mNumberBuffers = 2;  // 2 buffers for stereo non-interleaved
+        m_bufferList->mBuffers[0].mNumberChannels = 1;
+        m_bufferList->mBuffers[0].mDataByteSize = sizeof(float);
+        m_bufferList->mBuffers[0].mData = m_outputBufferData[0];
 
-        m_bufferList.mNumberBuffers = 1;
-        m_bufferList.mBuffers[0] = m_outputBuffer;
+        m_bufferList->mBuffers[1].mNumberChannels = 1;
+        m_bufferList->mBuffers[1].mDataByteSize = sizeof(float);
+        m_bufferList->mBuffers[1].mData = m_outputBufferData[1];
     }
 
     ~AudioUnitWrapper()
     {
         close();
-        if(m_inputBuffer.mData) free(m_inputBuffer.mData);
-        if(m_outputBuffer.mData) free(m_outputBuffer.mData);
+        if(m_outputBufferData[0]) free(m_outputBufferData[0]);
+        if(m_outputBufferData[1]) free(m_outputBufferData[1]);
+        if(m_bufferList) free(m_bufferList);
     }
 
     bool load(const char* name)
@@ -162,13 +169,17 @@ public:
                                      &streamFormat,
                                      sizeof(streamFormat));
 
-        // Set format for input (for effects)
-        AudioUnitSetProperty(m_audioUnit,
-                           kAudioUnitProperty_StreamFormat,
-                           kAudioUnitScope_Input,
-                           0,
-                           &streamFormat,
-                           sizeof(streamFormat));
+        // Set format for input (for effects only, not for MusicDevice)
+        if(m_componentType != kAudioUnitType_MusicDevice &&
+           m_componentType != kAudioUnitType_Generator)
+        {
+            AudioUnitSetProperty(m_audioUnit,
+                               kAudioUnitProperty_StreamFormat,
+                               kAudioUnitScope_Input,
+                               0,
+                               &streamFormat,
+                               sizeof(streamFormat));
+        }
 
         // Set maximum frames per slice
         UInt32 maxFrames = 1;
@@ -229,16 +240,11 @@ public:
         if(!m_audioUnit || m_bypass)
             return input;
 
-        // Set up input
-        float* inputData = (float*)m_inputBuffer.mData;
-        inputData[0] = input;
-        inputData[1] = input;
-
         // Render
         AudioTimeStamp timeStamp;
         memset(&timeStamp, 0, sizeof(AudioTimeStamp));
         timeStamp.mFlags = kAudioTimeStampSampleTimeValid;
-        timeStamp.mSampleTime = 0;
+        timeStamp.mSampleTime = m_sampleTime++;
 
         UInt32 frameCount = 1;
         AudioUnitRenderActionFlags flags = 0;
@@ -246,16 +252,30 @@ public:
         OSStatus status = AudioUnitRender(m_audioUnit,
                                         &flags,
                                         &timeStamp,
-                                        0,
+                                        0,  // output bus
                                         frameCount,
-                                        &m_bufferList);
+                                        m_bufferList);
 
         if(status != noErr)
+        {
+            static bool errorLogged = false;
+            if(!errorLogged) {
+                fprintf(stderr, "[AudioUnit]: Render error %d (type=%c%c%c%c)\n",
+                       (int)status,
+                       (char)(m_componentType >> 24),
+                       (char)(m_componentType >> 16),
+                       (char)(m_componentType >> 8),
+                       (char)m_componentType);
+                errorLogged = true;
+            }
+            // For MusicDevice, even on error, return silence rather than input
+            if(m_componentType == kAudioUnitType_MusicDevice)
+                return 0.0;
             return input;
+        }
 
         // Get output (mono from left channel)
-        float* outputData = (float*)m_outputBuffer.mData;
-        return outputData[0];
+        return m_outputBufferData[0][0];
     }
 
     bool setParameter(t_CKINT index, t_CKFLOAT value)
@@ -659,9 +679,8 @@ private:
     int m_numOutputs;
     bool m_bypass;
 
-    AudioBuffer m_inputBuffer;
-    AudioBuffer m_outputBuffer;
-    AudioBufferList m_bufferList;
+    AudioBufferList* m_bufferList;  // Dynamically allocated for multiple buffers
+    float* m_outputBufferData[2];  // Separate buffers for non-interleaved stereo
 
     std::vector<ParameterInfo> m_parameters;
 
@@ -669,6 +688,9 @@ private:
     MIDIClientRef m_midiClient;
     MIDIEndpointRef m_midiDestination;
     std::string m_midiDestinationName;
+
+    // Sample time counter for rendering
+    UInt64 m_sampleTime;
 };
 
 #else // !__APPLE__
