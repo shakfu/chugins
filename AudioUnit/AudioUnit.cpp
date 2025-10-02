@@ -31,6 +31,7 @@
 #ifdef __APPLE__
 #include <AudioToolbox/AudioToolbox.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <CoreMIDI/CoreMIDI.h>
 #endif
 
 // Forward declarations
@@ -50,6 +51,13 @@ CK_DLL_MFUN(audiounit_set_preset);
 CK_DLL_MFUN(audiounit_get_preset);
 CK_DLL_MFUN(audiounit_get_preset_count);
 CK_DLL_MFUN(audiounit_bypass);
+CK_DLL_MFUN(audiounit_send_midi);
+CK_DLL_MFUN(audiounit_note_on);
+CK_DLL_MFUN(audiounit_note_off);
+CK_DLL_MFUN(audiounit_control_change);
+CK_DLL_MFUN(audiounit_program_change);
+CK_DLL_MFUN(audiounit_is_music_device);
+CK_DLL_MFUN(audiounit_get_midi_device);
 
 t_CKINT audiounit_data_offset = 0;
 
@@ -64,6 +72,8 @@ public:
         , m_numInputs(1)
         , m_numOutputs(1)
         , m_bypass(false)
+        , m_midiClient(0)
+        , m_midiDestination(0)
     {
         // Allocate input/output buffers
         m_inputBuffer.mNumberChannels = 2;
@@ -182,11 +192,29 @@ public:
         // Cache parameter info
         cacheParameters();
 
+        // Create virtual MIDI destination if this is a MusicDevice
+        if(m_componentType == kAudioUnitType_MusicDevice)
+        {
+            // Get the component name
+            CFStringRef name = NULL;
+            AudioComponentCopyName(component, &name);
+            char nameBuffer[256] = "Unknown";
+            if(name)
+            {
+                CFStringGetCString(name, nameBuffer, sizeof(nameBuffer), kCFStringEncodingUTF8);
+                CFRelease(name);
+            }
+
+            createVirtualMIDIDestination(nameBuffer);
+        }
+
         return true;
     }
 
     void close()
     {
+        destroyVirtualMIDIDestination();
+
         if(m_audioUnit)
         {
             AudioUnitUninitialize(m_audioUnit);
@@ -285,6 +313,54 @@ public:
                                &bypassValue,
                                sizeof(bypassValue));
         }
+    }
+
+    // MIDI methods
+    bool sendMIDI(t_CKINT status, t_CKINT data1, t_CKINT data2)
+    {
+        if(!m_audioUnit || !isMusicDevice())
+            return false;
+
+        OSStatus result = MusicDeviceMIDIEvent(m_audioUnit,
+                                              (UInt32)status,
+                                              (UInt32)data1,
+                                              (UInt32)data2,
+                                              0);  // offsetSampleFrame = 0 for immediate
+        return (result == noErr);
+    }
+
+    bool noteOn(t_CKINT pitch, t_CKINT velocity)
+    {
+        // MIDI note on: 0x90 (note on, channel 0)
+        return sendMIDI(0x90, pitch, velocity);
+    }
+
+    bool noteOff(t_CKINT pitch)
+    {
+        // MIDI note off: 0x80 (note off, channel 0)
+        return sendMIDI(0x80, pitch, 0);
+    }
+
+    bool controlChange(t_CKINT cc, t_CKINT value)
+    {
+        // MIDI control change: 0xB0 (CC, channel 0)
+        return sendMIDI(0xB0, cc, value);
+    }
+
+    bool programChange(t_CKINT program)
+    {
+        // MIDI program change: 0xC0 (program change, channel 0)
+        return sendMIDI(0xC0, program, 0);
+    }
+
+    bool isMusicDevice() const
+    {
+        return m_audioUnit && m_componentType == kAudioUnitType_MusicDevice;
+    }
+
+    const char* getMIDIDeviceName() const
+    {
+        return m_midiDestinationName.c_str();
     }
 
     static void listAudioUnits()
@@ -490,6 +566,92 @@ private:
         free(paramList);
     }
 
+    // MIDI callback - called when MIDI data is received
+    static void midiReadCallback(const MIDIPacketList *pktlist,
+                                void *refCon,
+                                void *connRefCon)
+    {
+        AudioUnitWrapper* wrapper = (AudioUnitWrapper*)refCon;
+        if(!wrapper || !wrapper->m_audioUnit)
+            return;
+
+        const MIDIPacket *packet = &pktlist->packet[0];
+        for(UInt32 i = 0; i < pktlist->numPackets; i++)
+        {
+            // Parse MIDI message
+            if(packet->length >= 1)
+            {
+                UInt8 status = packet->data[0];
+                UInt8 data1 = packet->length >= 2 ? packet->data[1] : 0;
+                UInt8 data2 = packet->length >= 3 ? packet->data[2] : 0;
+
+                // Forward to AudioUnit
+                wrapper->sendMIDI(status, data1, data2);
+            }
+
+            packet = MIDIPacketNext(packet);
+        }
+    }
+
+    void createVirtualMIDIDestination(const char* auName)
+    {
+        destroyVirtualMIDIDestination();
+
+        // Create MIDI client
+        CFStringRef clientName = CFStringCreateWithFormat(NULL, NULL,
+            CFSTR("ChucK AudioUnit MIDI Client"));
+        OSStatus status = MIDIClientCreate(clientName, NULL, NULL, &m_midiClient);
+        CFRelease(clientName);
+
+        if(status != noErr)
+        {
+            fprintf(stderr, "[AudioUnit]: Failed to create MIDI client (error %d)\n", (int)status);
+            return;
+        }
+
+        // Create virtual destination
+        CFStringRef destName = CFStringCreateWithFormat(NULL, NULL,
+            CFSTR("ChucK AudioUnit: %s"), auName);
+        status = MIDIDestinationCreate(m_midiClient,
+                                       destName,
+                                       midiReadCallback,
+                                       this,
+                                       &m_midiDestination);
+
+        if(status == noErr)
+        {
+            char nameBuf[256];
+            CFStringGetCString(destName, nameBuf, sizeof(nameBuf), kCFStringEncodingUTF8);
+            m_midiDestinationName = nameBuf;
+            fprintf(stderr, "[AudioUnit]: Created virtual MIDI destination: %s\n", nameBuf);
+        }
+        else
+        {
+            fprintf(stderr, "[AudioUnit]: Failed to create MIDI destination (error %d)\n", (int)status);
+            MIDIClientDispose(m_midiClient);
+            m_midiClient = 0;
+        }
+
+        CFRelease(destName);
+    }
+
+    void destroyVirtualMIDIDestination()
+    {
+        if(m_midiDestination)
+        {
+            MIDIEndpointDispose(m_midiDestination);
+            m_midiDestination = 0;
+        }
+
+        if(m_midiClient)
+        {
+            MIDIClientDispose(m_midiClient);
+            m_midiClient = 0;
+        }
+
+        m_midiDestinationName.clear();
+    }
+
     AudioUnit m_audioUnit;
     t_CKFLOAT m_sampleRate;
     UInt32 m_componentType;
@@ -502,6 +664,11 @@ private:
     AudioBufferList m_bufferList;
 
     std::vector<ParameterInfo> m_parameters;
+
+    // MIDI support
+    MIDIClientRef m_midiClient;
+    MIDIEndpointRef m_midiDestination;
+    std::string m_midiDestinationName;
 };
 
 #else // !__APPLE__
@@ -521,6 +688,13 @@ public:
     const char* getParameterName(t_CKINT index) { return ""; }
     t_CKINT getParameterCount() { return 0; }
     void setBypass(bool bypass) {}
+    bool sendMIDI(t_CKINT status, t_CKINT data1, t_CKINT data2) { return false; }
+    bool noteOn(t_CKINT pitch, t_CKINT velocity) { return false; }
+    bool noteOff(t_CKINT pitch) { return false; }
+    bool controlChange(t_CKINT cc, t_CKINT value) { return false; }
+    bool programChange(t_CKINT program) { return false; }
+    bool isMusicDevice() const { return false; }
+    const char* getMIDIDeviceName() const { return ""; }
     static void listAudioUnits() {
         fprintf(stderr, "[AudioUnit]: AudioUnits are only available on macOS\n");
     }
@@ -581,6 +755,37 @@ CK_DLL_QUERY(AudioUnit)
     QUERY->add_mfun(QUERY, audiounit_bypass, "void", "bypass");
     QUERY->add_arg(QUERY, "int", "bypass");
     QUERY->doc_func(QUERY, "Bypass the AudioUnit (1 = bypass, 0 = active).");
+
+    // MIDI methods
+    QUERY->add_mfun(QUERY, audiounit_send_midi, "int", "sendMIDI");
+    QUERY->add_arg(QUERY, "int", "status");
+    QUERY->add_arg(QUERY, "int", "data1");
+    QUERY->add_arg(QUERY, "int", "data2");
+    QUERY->doc_func(QUERY, "Send raw MIDI message to AudioUnit (for MusicDevice types). Returns 1 on success.");
+
+    QUERY->add_mfun(QUERY, audiounit_note_on, "int", "noteOn");
+    QUERY->add_arg(QUERY, "int", "pitch");
+    QUERY->add_arg(QUERY, "int", "velocity");
+    QUERY->doc_func(QUERY, "Send MIDI note-on message (channel 0). Returns 1 on success.");
+
+    QUERY->add_mfun(QUERY, audiounit_note_off, "int", "noteOff");
+    QUERY->add_arg(QUERY, "int", "pitch");
+    QUERY->doc_func(QUERY, "Send MIDI note-off message (channel 0). Returns 1 on success.");
+
+    QUERY->add_mfun(QUERY, audiounit_control_change, "int", "controlChange");
+    QUERY->add_arg(QUERY, "int", "cc");
+    QUERY->add_arg(QUERY, "int", "value");
+    QUERY->doc_func(QUERY, "Send MIDI control change message (channel 0). Returns 1 on success.");
+
+    QUERY->add_mfun(QUERY, audiounit_program_change, "int", "programChange");
+    QUERY->add_arg(QUERY, "int", "program");
+    QUERY->doc_func(QUERY, "Send MIDI program change message (channel 0). Returns 1 on success.");
+
+    QUERY->add_mfun(QUERY, audiounit_is_music_device, "int", "isMusicDevice");
+    QUERY->doc_func(QUERY, "Check if loaded AudioUnit is a MusicDevice (instrument). Returns 1 if true.");
+
+    QUERY->add_mfun(QUERY, audiounit_get_midi_device, "string", "getMIDIDeviceName");
+    QUERY->doc_func(QUERY, "Get the name of the virtual MIDI destination (if MusicDevice).");
 
     audiounit_data_offset = QUERY->add_mvar(QUERY, "int", "@au_data", false);
 
@@ -704,4 +909,61 @@ CK_DLL_MFUN(audiounit_bypass)
 
     if(wrapper)
         wrapper->setBypass(bypass != 0);
+}
+
+CK_DLL_MFUN(audiounit_send_midi)
+{
+    AudioUnitWrapper* wrapper = (AudioUnitWrapper*)OBJ_MEMBER_INT(SELF, audiounit_data_offset);
+    t_CKINT status = GET_NEXT_INT(ARGS);
+    t_CKINT data1 = GET_NEXT_INT(ARGS);
+    t_CKINT data2 = GET_NEXT_INT(ARGS);
+
+    RETURN->v_int = (wrapper && wrapper->sendMIDI(status, data1, data2)) ? 1 : 0;
+}
+
+CK_DLL_MFUN(audiounit_note_on)
+{
+    AudioUnitWrapper* wrapper = (AudioUnitWrapper*)OBJ_MEMBER_INT(SELF, audiounit_data_offset);
+    t_CKINT pitch = GET_NEXT_INT(ARGS);
+    t_CKINT velocity = GET_NEXT_INT(ARGS);
+
+    RETURN->v_int = (wrapper && wrapper->noteOn(pitch, velocity)) ? 1 : 0;
+}
+
+CK_DLL_MFUN(audiounit_note_off)
+{
+    AudioUnitWrapper* wrapper = (AudioUnitWrapper*)OBJ_MEMBER_INT(SELF, audiounit_data_offset);
+    t_CKINT pitch = GET_NEXT_INT(ARGS);
+
+    RETURN->v_int = (wrapper && wrapper->noteOff(pitch)) ? 1 : 0;
+}
+
+CK_DLL_MFUN(audiounit_control_change)
+{
+    AudioUnitWrapper* wrapper = (AudioUnitWrapper*)OBJ_MEMBER_INT(SELF, audiounit_data_offset);
+    t_CKINT cc = GET_NEXT_INT(ARGS);
+    t_CKINT value = GET_NEXT_INT(ARGS);
+
+    RETURN->v_int = (wrapper && wrapper->controlChange(cc, value)) ? 1 : 0;
+}
+
+CK_DLL_MFUN(audiounit_program_change)
+{
+    AudioUnitWrapper* wrapper = (AudioUnitWrapper*)OBJ_MEMBER_INT(SELF, audiounit_data_offset);
+    t_CKINT program = GET_NEXT_INT(ARGS);
+
+    RETURN->v_int = (wrapper && wrapper->programChange(program)) ? 1 : 0;
+}
+
+CK_DLL_MFUN(audiounit_is_music_device)
+{
+    AudioUnitWrapper* wrapper = (AudioUnitWrapper*)OBJ_MEMBER_INT(SELF, audiounit_data_offset);
+    RETURN->v_int = (wrapper && wrapper->isMusicDevice()) ? 1 : 0;
+}
+
+CK_DLL_MFUN(audiounit_get_midi_device)
+{
+    AudioUnitWrapper* wrapper = (AudioUnitWrapper*)OBJ_MEMBER_INT(SELF, audiounit_data_offset);
+    const char* name = wrapper ? wrapper->getMIDIDeviceName() : "";
+    RETURN->v_string = API->object->create_string(VM, name, false);
 }

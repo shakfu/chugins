@@ -32,7 +32,18 @@ chuck --chugin:/path/to/AudioUnit.chug examples/01-basic-effect.ck
 
 - **05-bypass.ck** - Toggle AudioUnit bypass to compare processed vs unprocessed audio
 - **06-generator.ck** - Using AudioUnits as sound generators/instruments
-- **07-midi.ck** - MIDI control concepts and workarounds
+
+### MIDI Control
+
+- **07-midi.ck** - **Option A:** Direct programmatic MIDI control
+  - Send MIDI messages directly to AudioUnit instruments from ChucK code
+  - Demonstrates noteOn, noteOff, controlChange, programChange, and sendMIDI
+  - Immediate, programmatic control without external MIDI devices
+
+- **07-midi-routing.ck** - **Option C:** Virtual MIDI destination
+  - Demonstrates the automatically-created virtual MIDI destination
+  - Shows how to route external MIDI or ChucK's MidiIn/MidiOut to AudioUnits
+  - Enables integration with MIDI controllers, DAWs, and other software
 
 ### Multi-Effect Usage
 
