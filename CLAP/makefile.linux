@@ -1,0 +1,5 @@
+FLAGS+=-I$(CK_SRC_PATH) -fPIC -std=c++17
+LDFLAGS+=-shared -lstdc++ -ldl
+
+LD=g++
+CXX=g++

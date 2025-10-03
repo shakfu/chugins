@@ -1,0 +1,10 @@
+# CLAP headers are cloned during build
+clap-headers/
+
+# Build artifacts
+*.o
+*.chug
+*.schug
+*.wasm
+Release/
+Debug/

@@ -45,4 +45,5 @@ ipch
 */*.xcodeproj/xcuserdata
 
 .vscode/*
-
+.claude
+CLAUDE.md

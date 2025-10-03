@@ -1,0 +1,20 @@
+# Visual Studio makefile for CLAP chugin
+# Use the Visual Studio solution/project files instead
+# Or use nmake with this makefile
+
+!MESSAGE Building CLAP chugin for Windows
+
+CK_SRC_PATH=..\chuck\include
+
+CHUGIN_NAME=CLAP
+
+CXX_MODULES=CLAP.cpp
+
+CFLAGS=/I$(CK_SRC_PATH) /I.\clap-headers\include /D_USRDLL /D_WINDLL /std:c++17 /O2
+LDFLAGS=/DLL
+
+$(CHUGIN_NAME).chug: $(CXX_MODULES)
+	cl $(CFLAGS) /LD $(CXX_MODULES) /link $(LDFLAGS) /OUT:$(CHUGIN_NAME).chug
+
+clean:
+	del *.obj *.chug *.exp *.lib

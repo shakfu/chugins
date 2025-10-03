@@ -1,10 +1,10 @@
 
-CHUGINS=AbletonLink ABSaturator AmbPan AudioUnit Bitcrusher KasFilter MagicSine FIR \
+CHUGINS=AbletonLink ABSaturator AmbPan AudioUnit Bitcrusher CLAP KasFilter MagicSine FIR \
 	FoldbackSaturator Ladspa NHHall PanN PitchTrack GVerb \
 	Mesh2D Spectacle Elliptic Sigmund ExpDelay Overdrive \
 	Multicomb PowerADSR WinFuncEnv WPDiodeLadder WPKorg35 \
 	Binaural ExpEnv Perlin Random RegEx Wavetable XML \
-	Line Range Patch 
+	Line Range Patch
 
 CHUGS_NOT_ON_WIN32=FluidSynth AudioUnit
 CHUGINS_WIN32=$(filter-out $(CHUGS_NOT_ON_WIN32),$(CHUGINS))
@@ -74,7 +74,8 @@ GreyholeDownUpDecimateDemo.ck
 EXAMPLES=Bitcrusher/Bitcrusher-test.ck MagicSine/MagicSine-test.ck \
 ABSaturator/ABSaturator-test.ck KasFilter/README-KasFilter.ck \
 $(addprefix FIR/examples/,$(FIR_EXAMPLES)) \
-PanN/Pan4-test.ck PanN/Pan8-test.ck
+PanN/Pan4-test.ck PanN/Pan8-test.ck AudioUnit/AudioUnit-test.ck \
+CLAP/CLAP-test.ck
 
 bin-dist-osx: osx
 	mkdir -p chugins-mac-$(DATE)/chugins/
