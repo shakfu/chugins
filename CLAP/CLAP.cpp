@@ -53,6 +53,10 @@ CK_DLL_MFUN(clap_send_midi);
 CK_DLL_MFUN(clap_note_on);
 CK_DLL_MFUN(clap_note_off);
 CK_DLL_MFUN(clap_is_instrument);
+CK_DLL_MFUN(clap_get_preset_count);
+CK_DLL_MFUN(clap_get_preset_name);
+CK_DLL_MFUN(clap_load_preset);
+CK_DLL_MFUN(clap_load_preset_by_name);
 
 t_CKINT clap_data_offset = 0;
 
@@ -71,6 +75,9 @@ public:
         , m_params(nullptr)
         , m_audioPortsExt(nullptr)
         , m_notePortsExt(nullptr)
+        , m_presetLoad(nullptr)
+        , m_presetDiscoveryFactory(nullptr)
+        , m_presetDiscoveryProvider(nullptr)
     {
         // Initialize host
         m_host.clap_version = CLAP_VERSION;
@@ -132,6 +139,7 @@ public:
     ~CLAPWrapper()
     {
         close();
+        cleanupPresetDiscovery();
     }
 
     bool load(const char* path)
@@ -246,9 +254,13 @@ public:
         m_params = (const clap_plugin_params_t*)m_plugin->get_extension(m_plugin, CLAP_EXT_PARAMS);
         m_audioPortsExt = (const clap_plugin_audio_ports_t*)m_plugin->get_extension(m_plugin, CLAP_EXT_AUDIO_PORTS);
         m_notePortsExt = (const clap_plugin_note_ports_t*)m_plugin->get_extension(m_plugin, CLAP_EXT_NOTE_PORTS);
+        m_presetLoad = (const clap_plugin_preset_load_t*)m_plugin->get_extension(m_plugin, CLAP_EXT_PRESET_LOAD);
 
         // Cache parameters
         cacheParameters();
+
+        // Initialize preset discovery
+        initPresetDiscovery(path);
 
         // Activate plugin
         if(!m_plugin->activate(m_plugin, m_sampleRate, 1, 8192))
@@ -320,6 +332,8 @@ public:
         m_params = nullptr;
         m_audioPortsExt = nullptr;
         m_notePortsExt = nullptr;
+        m_presetLoad = nullptr;
+        cleanupPresetDiscovery();
     }
 
     SAMPLE tick(SAMPLE input)
@@ -510,6 +524,45 @@ public:
         return m_isInstrument;
     }
 
+    // Preset methods
+    t_CKINT getPresetCount() const
+    {
+        return m_presets.size();
+    }
+
+    const char* getPresetName(t_CKINT index) const
+    {
+        if(index < 0 || index >= m_presets.size())
+            return "";
+        return m_presets[index].name.c_str();
+    }
+
+    bool loadPreset(t_CKINT index)
+    {
+        if(!m_presetLoad || index < 0 || index >= m_presets.size())
+            return false;
+
+        const PresetInfo& preset = m_presets[index];
+        return m_presetLoad->from_location(m_plugin, preset.location_kind,
+                                           preset.location.c_str(),
+                                           preset.load_key.empty() ? nullptr : preset.load_key.c_str());
+    }
+
+    bool loadPresetByName(const char* name)
+    {
+        if(!m_presetLoad)
+            return false;
+
+        for(size_t i = 0; i < m_presets.size(); i++)
+        {
+            if(m_presets[i].name == name)
+            {
+                return loadPreset(i);
+            }
+        }
+        return false;
+    }
+
     static void listCLAPPlugins()
     {
         std::vector<std::string> searchPaths;
@@ -569,6 +622,14 @@ private:
         std::string name;
     };
 
+    struct PresetInfo
+    {
+        std::string name;
+        std::string location;
+        std::string load_key;
+        uint32_t location_kind;
+    };
+
     void cacheParameters()
     {
         m_parameters.clear();
@@ -612,6 +673,215 @@ private:
         // Not implemented - would require main thread callback
     }
 
+    // Preset discovery support
+    void initPresetDiscovery(const char* path)
+    {
+        if(!m_entry)
+            return;
+
+        // Get preset discovery factory
+        m_presetDiscoveryFactory = (const clap_preset_discovery_factory_t*)
+            m_entry->get_factory(CLAP_PRESET_DISCOVERY_FACTORY_ID);
+
+        if(!m_presetDiscoveryFactory)
+            return;
+
+        // Create indexer
+        clap_preset_discovery_indexer_t indexer;
+        memset(&indexer, 0, sizeof(indexer));
+        indexer.clap_version = CLAP_VERSION;
+        indexer.name = "ChucK";
+        indexer.vendor = "CCRMA";
+        indexer.url = "https://chuck.cs.princeton.edu";
+        indexer.version = "1.5.5.0";
+        indexer.indexer_data = this;
+        indexer.declare_filetype = indexer_declare_filetype;
+        indexer.declare_location = indexer_declare_location;
+        indexer.declare_soundpack = indexer_declare_soundpack;
+        indexer.get_extension = nullptr;
+
+        // Get plugin descriptor to find provider
+        const clap_plugin_factory_t* factory =
+            (const clap_plugin_factory_t*)m_entry->get_factory(CLAP_PLUGIN_FACTORY_ID);
+        if(!factory)
+            return;
+
+        const clap_plugin_descriptor_t* desc = factory->get_plugin_descriptor(factory, 0);
+        if(!desc || !desc->id)
+            return;
+
+        // Try to create provider for this plugin
+        uint32_t provider_count = m_presetDiscoveryFactory->count(m_presetDiscoveryFactory);
+        for(uint32_t i = 0; i < provider_count; i++)
+        {
+            const clap_preset_discovery_provider_descriptor_t* provider_desc =
+                m_presetDiscoveryFactory->get_descriptor(m_presetDiscoveryFactory, i);
+            if(!provider_desc)
+                continue;
+
+            m_presetDiscoveryProvider = m_presetDiscoveryFactory->create(
+                m_presetDiscoveryFactory, &indexer, provider_desc->id);
+
+            if(m_presetDiscoveryProvider)
+            {
+                if(m_presetDiscoveryProvider->init(m_presetDiscoveryProvider))
+                {
+                    // Discovery successful - locations and presets will be collected via callbacks
+                    discoverPresets();
+                    break;
+                }
+                else
+                {
+                    m_presetDiscoveryProvider->destroy(m_presetDiscoveryProvider);
+                    m_presetDiscoveryProvider = nullptr;
+                }
+            }
+        }
+    }
+
+    void cleanupPresetDiscovery()
+    {
+        if(m_presetDiscoveryProvider)
+        {
+            m_presetDiscoveryProvider->destroy(m_presetDiscoveryProvider);
+            m_presetDiscoveryProvider = nullptr;
+        }
+        m_presetDiscoveryFactory = nullptr;
+        m_presets.clear();
+        m_discoveryLocations.clear();
+    }
+
+    void discoverPresets()
+    {
+        if(!m_presetDiscoveryProvider)
+            return;
+
+        // Create metadata receiver
+        clap_preset_discovery_metadata_receiver_t receiver;
+        memset(&receiver, 0, sizeof(receiver));
+        receiver.receiver_data = this;
+        receiver.on_error = receiver_on_error;
+        receiver.begin_preset = receiver_begin_preset;
+        receiver.add_plugin_id = receiver_add_plugin_id;
+        receiver.set_soundpack_id = receiver_set_soundpack_id;
+        receiver.set_flags = receiver_set_flags;
+        receiver.add_creator = receiver_add_creator;
+        receiver.set_description = receiver_set_description;
+        receiver.set_timestamps = receiver_set_timestamps;
+        receiver.add_feature = receiver_add_feature;
+        receiver.add_extra_info = receiver_add_extra_info;
+
+        // Crawl declared locations for presets
+        for(const auto& loc : m_discoveryLocations)
+        {
+            m_currentPresetLocation = loc;
+            m_presetDiscoveryProvider->get_metadata(m_presetDiscoveryProvider,
+                                                    loc.kind, loc.location.c_str(), &receiver);
+        }
+    }
+
+    // Indexer callbacks
+    static bool CLAP_ABI indexer_declare_filetype(const clap_preset_discovery_indexer_t* indexer,
+                                                   const clap_preset_discovery_filetype_t* filetype)
+    {
+        // We accept all file types
+        return true;
+    }
+
+    static bool CLAP_ABI indexer_declare_location(const clap_preset_discovery_indexer_t* indexer,
+                                                   const clap_preset_discovery_location_t* location)
+    {
+        CLAPWrapper* wrapper = (CLAPWrapper*)indexer->indexer_data;
+        if(!location)
+            return false;
+
+        DiscoveryLocation loc;
+        loc.name = location->name ? location->name : "";
+        loc.location = location->location ? location->location : "";
+        loc.kind = location->kind;
+        loc.flags = location->flags;
+
+        wrapper->m_discoveryLocations.push_back(loc);
+        return true;
+    }
+
+    static bool CLAP_ABI indexer_declare_soundpack(const clap_preset_discovery_indexer_t* indexer,
+                                                    const clap_preset_discovery_soundpack_t* soundpack)
+    {
+        // We don't track soundpacks for now
+        return true;
+    }
+
+    // Metadata receiver callbacks
+    static void CLAP_ABI receiver_on_error(const clap_preset_discovery_metadata_receiver_t* receiver,
+                                           int32_t os_error, const char* error_message)
+    {
+        // Silently ignore errors for now
+    }
+
+    static bool CLAP_ABI receiver_begin_preset(const clap_preset_discovery_metadata_receiver_t* receiver,
+                                                const char* name, const char* load_key)
+    {
+        CLAPWrapper* wrapper = (CLAPWrapper*)receiver->receiver_data;
+
+        PresetInfo preset;
+        preset.name = name ? name : "";
+        preset.load_key = load_key ? load_key : "";
+        preset.location = wrapper->m_currentPresetLocation.location;
+        preset.location_kind = wrapper->m_currentPresetLocation.kind;
+
+        wrapper->m_presets.push_back(preset);
+        return true;
+    }
+
+    static void CLAP_ABI receiver_add_plugin_id(const clap_preset_discovery_metadata_receiver_t* receiver,
+                                                 const clap_universal_plugin_id_t* plugin_id)
+    {
+        // Not used
+    }
+
+    static void CLAP_ABI receiver_set_soundpack_id(const clap_preset_discovery_metadata_receiver_t* receiver,
+                                                    const char* soundpack_id)
+    {
+        // Not used
+    }
+
+    static void CLAP_ABI receiver_set_flags(const clap_preset_discovery_metadata_receiver_t* receiver,
+                                            uint32_t flags)
+    {
+        // Not used
+    }
+
+    static void CLAP_ABI receiver_add_creator(const clap_preset_discovery_metadata_receiver_t* receiver,
+                                              const char* creator)
+    {
+        // Not used
+    }
+
+    static void CLAP_ABI receiver_set_description(const clap_preset_discovery_metadata_receiver_t* receiver,
+                                                   const char* description)
+    {
+        // Not used
+    }
+
+    static void CLAP_ABI receiver_set_timestamps(const clap_preset_discovery_metadata_receiver_t* receiver,
+                                                  clap_timestamp creation_time, clap_timestamp modification_time)
+    {
+        // Not used
+    }
+
+    static void CLAP_ABI receiver_add_feature(const clap_preset_discovery_metadata_receiver_t* receiver,
+                                              const char* feature)
+    {
+        // Not used
+    }
+
+    static void CLAP_ABI receiver_add_extra_info(const clap_preset_discovery_metadata_receiver_t* receiver,
+                                                  const char* key, const char* value)
+    {
+        // Not used
+    }
+
     // Event list callbacks
     static uint32_t CLAP_ABI event_list_size(const clap_input_events_t* list)
     {
@@ -650,6 +920,9 @@ private:
     const clap_plugin_params_t* m_params;
     const clap_plugin_audio_ports_t* m_audioPortsExt;
     const clap_plugin_note_ports_t* m_notePortsExt;
+    const clap_plugin_preset_load_t* m_presetLoad;
+    const clap_preset_discovery_factory_t* m_presetDiscoveryFactory;
+    const clap_preset_discovery_provider_t* m_presetDiscoveryProvider;
 
     // Audio buffers
     float m_inputData[1];
@@ -668,6 +941,19 @@ private:
     std::vector<clap_event_param_value_t> m_eventQueue;
 
     std::vector<ParameterInfo> m_parameters;
+
+    // Preset discovery
+    struct DiscoveryLocation
+    {
+        std::string name;
+        std::string location;
+        uint32_t kind;
+        uint32_t flags;
+    };
+
+    std::vector<PresetInfo> m_presets;
+    std::vector<DiscoveryLocation> m_discoveryLocations;
+    DiscoveryLocation m_currentPresetLocation;
 };
 
 // ChucK DLL Query
@@ -744,6 +1030,22 @@ CK_DLL_QUERY(CLAP)
 
     QUERY->add_mfun(QUERY, clap_is_instrument, "int", "isInstrument");
     QUERY->doc_func(QUERY, "Check if loaded CLAP plugin is an instrument. Returns 1 if true.");
+
+    // Preset methods
+    QUERY->add_mfun(QUERY, clap_get_preset_count, "int", "presetCount");
+    QUERY->doc_func(QUERY, "Get the number of available presets.");
+
+    QUERY->add_mfun(QUERY, clap_get_preset_name, "string", "presetName");
+    QUERY->add_arg(QUERY, "int", "index");
+    QUERY->doc_func(QUERY, "Get the name of a preset by index.");
+
+    QUERY->add_mfun(QUERY, clap_load_preset, "int", "loadPreset");
+    QUERY->add_arg(QUERY, "int", "index");
+    QUERY->doc_func(QUERY, "Load a preset by index. Returns 1 on success.");
+
+    QUERY->add_mfun(QUERY, clap_load_preset_by_name, "int", "loadPresetByName");
+    QUERY->add_arg(QUERY, "string", "name");
+    QUERY->doc_func(QUERY, "Load a preset by name. Returns 1 on success.");
 
     clap_data_offset = QUERY->add_mvar(QUERY, "int", "@clap_data", false);
 
@@ -894,4 +1196,35 @@ CK_DLL_MFUN(clap_is_instrument)
 {
     CLAPWrapper* wrapper = (CLAPWrapper*)OBJ_MEMBER_INT(SELF, clap_data_offset);
     RETURN->v_int = (wrapper && wrapper->isInstrument()) ? 1 : 0;
+}
+
+CK_DLL_MFUN(clap_get_preset_count)
+{
+    CLAPWrapper* wrapper = (CLAPWrapper*)OBJ_MEMBER_INT(SELF, clap_data_offset);
+    RETURN->v_int = wrapper ? wrapper->getPresetCount() : 0;
+}
+
+CK_DLL_MFUN(clap_get_preset_name)
+{
+    CLAPWrapper* wrapper = (CLAPWrapper*)OBJ_MEMBER_INT(SELF, clap_data_offset);
+    t_CKINT index = GET_NEXT_INT(ARGS);
+
+    const char* name = wrapper ? wrapper->getPresetName(index) : "";
+    RETURN->v_string = API->object->create_string(VM, name, false);
+}
+
+CK_DLL_MFUN(clap_load_preset)
+{
+    CLAPWrapper* wrapper = (CLAPWrapper*)OBJ_MEMBER_INT(SELF, clap_data_offset);
+    t_CKINT index = GET_NEXT_INT(ARGS);
+
+    RETURN->v_int = (wrapper && wrapper->loadPreset(index)) ? 1 : 0;
+}
+
+CK_DLL_MFUN(clap_load_preset_by_name)
+{
+    CLAPWrapper* wrapper = (CLAPWrapper*)OBJ_MEMBER_INT(SELF, clap_data_offset);
+    std::string name = GET_NEXT_STRING_SAFE(ARGS);
+
+    RETURN->v_int = (wrapper && wrapper->loadPresetByName(name.c_str())) ? 1 : 0;
 }
